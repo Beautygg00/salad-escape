@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Salad Escape</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;600;700&display=swap" rel="stylesheet">
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+} }
+</script>
+<style>
+  :root {
+    --green: #4caf50; --green-dark: #2e7d32; --leaf: #8bc34a; --tomato: #e53935;
+    --cream: #fff8e7; --ink: #1f2a1c; --panel: rgba(20, 30, 18, 0.82);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #1a2416; color: var(--cream);
+    font-family: "Fredoka", system-ui, sans-serif; user-select: none; -webkit-user-select: none; touch-action: none; }
+  canvas#view { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+  .hidden { display: none !important; }
+  .screen { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; padding: 16px; z-index: 10; }
+  .card { background: var(--panel); border: 3px solid var(--leaf); border-radius: 22px; padding: 24px 28px; max-width: 560px; width: 100%;
+    box-shadow: 0 12px 40px rgba(0,0,0,.45); backdrop-filter: blur(6px); max-height: calc(100vh - 32px); overflow-y: auto; }
+  h1, h2 { margin: 0 0 12px; line-height: 1.05; }
+  button { font-family: inherit; font-size: 18px; font-weight: 600; border: 0; border-radius: 14px; padding: 12px 20px; cursor: pointer;
+    background: var(--leaf); color: var(--ink); box-shadow: 0 4px 0 var(--green-dark); transition: transform .08s; }
+  button:hover { transform: translateY(-2px); }
+  button:active { transform: translateY(2px); box-shadow: 0 2px 0 var(--green-dark); }
+  button.secondary { background: var(--cream); box-shadow: 0 4px 0 #b9ad8f; }
+  button.danger { background: var(--tomato); color: #fff; box-shadow: 0 4px 0 #8e1b18; }
+
+  /* ---------- home ---------- */
+  #home { background: linear-gradient(180deg, rgba(10,20,8,.15) 0%, rgba(10,20,8,.65) 100%); flex-direction: column; justify-content: flex-end; padding-bottom: 7vh; }
+  #home .title { text-align: center; margin-bottom: 3vh; }
+  #home .title h1 { font-size: clamp(48px, 10vw, 110px); font-weight: 700; letter-spacing: 2px; color: var(--leaf);
+    text-shadow: 0 5px 0 var(--green-dark), 0 10px 30px rgba(0,0,0,.6); transform: rotate(-3deg); }
+  #home .title h1 span { color: var(--tomato); text-shadow: 0 5px 0 #8e1b18, 0 10px 30px rgba(0,0,0,.6); }
+  #home .title p { font-size: clamp(16px, 2.4vw, 22px); margin: 8px 0 0; text-shadow: 0 2px 8px #000; }
+  #home .menu { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
+  #home .menu button.play { font-size: 26px; padding: 16px 44px; }
+  #home .best { margin-top: 14px; opacity: .9; text-shadow: 0 2px 6px #000; }
+  .panel-list { line-height: 1.5; padding-left: 20px; }
+  .keys { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 10px 0 16px; }
+  kbd { background: var(--cream); color: var(--ink); border-radius: 6px; padding: 1px 8px; font-family: inherit; font-weight: 600; box-shadow: 0 2px 0 #b9ad8f; white-space: nowrap; }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 12px 0; }
+  input[type=range] { width: 55%; accent-color: var(--leaf); }
+  .actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 18px; flex-wrap: wrap; }
+
+  /* ---------- loading ---------- */
+  #loading { background: #1a2416; flex-direction: column; z-index: 50; }
+  #loading .bar { width: min(320px, 80vw); height: 14px; border-radius: 8px; background: #33452c; overflow: hidden; margin-top: 16px; }
+  #loading .bar div { height: 100%; width: 0; background: var(--leaf); transition: width .2s; }
+  #loading .salad { font-size: 64px; animation: bob 1s ease-in-out infinite; }
+  @keyframes bob { 50% { transform: translateY(-10px) rotate(8deg); } }
+
+  /* ---------- HUD ---------- */
+  #hud { position: fixed; inset: 0; pointer-events: none; z-index: 5; }
+  #objective { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); background: var(--panel); border: 2px solid var(--leaf);
+    border-radius: 14px; padding: 8px 18px; font-size: clamp(14px, 2vw, 18px); max-width: calc(100vw - 32px); text-align: center; }
+  #status { position: absolute; top: 14px; left: 14px; display: flex; flex-direction: column; gap: 8px; }
+  .pill { background: var(--panel); border-radius: 12px; padding: 6px 12px; font-size: 15px; display: flex; align-items: center; gap: 8px; }
+  #alert { font-weight: 700; transition: background .3s; }
+  #alert.calm { background: rgba(46,125,50,.85); } #alert.sus { background: rgba(230,160,0,.9); color: #231a00; }
+  #alert.chase { background: rgba(229,57,53,.92); animation: pulse .5s infinite alternate; } #alert.hidden-s { background: rgba(60,60,90,.9); }
+  @keyframes pulse { to { transform: scale(1.06); } }
+  #stamina { width: 140px; height: 10px; background: #33452c; border-radius: 6px; overflow: hidden; }
+  #stamina div { height: 100%; width: 100%; background: #ffd54f; }
+  #timer { position: absolute; top: 14px; right: 14px; }
+  #prompt { position: absolute; bottom: 18%; left: 50%; transform: translateX(-50%); background: var(--panel); border-radius: 14px; padding: 10px 18px; text-align: center; }
+  #prompt .prog { height: 8px; background: #33452c; border-radius: 5px; margin-top: 6px; overflow: hidden; }
+  #prompt .prog div { height: 100%; width: 0; background: var(--leaf); }
+  #bubble { position: fixed; z-index: 6; pointer-events: none; background: #fff; color: var(--ink); border-radius: 16px; padding: 8px 14px; font-weight: 600;
+    font-size: 16px; max-width: 240px; transform: translate(-50%, -100%); box-shadow: 0 4px 14px rgba(0,0,0,.35); }
+  #bubble::after { content: ""; position: absolute; left: 50%; bottom: -10px; transform: translateX(-50%); border: 10px solid transparent; border-top-color: #fff; border-bottom: 0; }
+  #toast { position: absolute; top: 64px; left: 50%; transform: translateX(-50%); font-size: clamp(20px, 3.5vw, 32px); font-weight: 700; color: #ffeb3b;
+    text-shadow: 0 3px 0 #5d4000, 0 6px 18px #000; transition: opacity .4s; text-align: center; }
+  #vignette { position: fixed; inset: 0; pointer-events: none; z-index: 4; opacity: 0; transition: opacity .4s;
+    background: radial-gradient(ellipse at center, transparent 55%, rgba(200,0,0,.55) 100%); }
+  #crosshint { position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%); font-size: 13px; opacity: .75; text-shadow: 0 1px 4px #000; }
+
+  /* ---------- touch ---------- */
+  #touch { position: fixed; inset: 0; z-index: 7; pointer-events: none; }
+  #stick { position: absolute; left: 24px; bottom: 24px; width: 130px; height: 130px; border-radius: 50%; background: rgba(255,255,255,.12);
+    border: 2px solid rgba(255,255,255,.35); pointer-events: auto; }
+  #stick div { position: absolute; left: 40px; top: 40px; width: 50px; height: 50px; border-radius: 50%; background: rgba(255,255,255,.55); }
+  #tbtns { position: absolute; right: 20px; bottom: 24px; display: grid; grid-template-columns: repeat(2, 72px); gap: 12px; pointer-events: auto; }
+  #tbtns button { width: 72px; height: 72px; border-radius: 50%; padding: 0; font-size: 15px; opacity: .85; }
+  #tbtns button:first-child { grid-column: span 2; justify-self: end; }
+  #pauseBtn { position: fixed; right: 14px; top: 56px; z-index: 8; padding: 6px 12px; font-size: 15px; }
+  @media (max-width: 600px) { #status { top: 70px; } .pill { font-size: 13px; } #stamina { width: 100px; } }
+</style>
+</head>
+<body>
+<canvas id="view"></canvas>
+
+<div id="loading" class="screen">
+  <div class="salad">🥬</div>
+  <h2>Washing the lettuce…</h2>
+  <div class="bar"><div id="loadbar"></div></div>
+</div>
+
+<div id="home" class="screen hidden">
+  <div class="title">
+    <h1>SALAD <span>ESCAPE</span></h1>
+    <p>Maria is making <b>minestrone di verdure</b>… and you're the missing vegetable.</p>
+  </div>
+  <div class="menu">
+    <button class="play" id="btnPlay">▶ Play</button>
+    <button class="secondary" id="btnHow">How to play</button>
+    <button class="secondary" id="btnSettings">Settings</button>
+    <button class="secondary" id="btnCredits">Credits</button>
+  </div>
+  <div class="best" id="bestTime"></div>
+</div>
+
+<div id="how" class="screen hidden"><div class="card">
+  <h2>🥬 How to escape</h2>
+  <p>You're a little salad in Maria's flat. She's vegan and she's cooking. Don't end up in the pot.</p>
+  <ol class="panel-list">
+    <li><b>Find 3 chopsticks</b> on the floor. They build a ramp up to the sofa.</li>
+    <li><b>Find 3 basil leaves</b> on the sofa. Your herb friends give you <b>Super Leap</b>.</li>
+    <li>Jump onto the sofa back, get to the <b>window sill</b>, <b>hold E</b> to open the window and <b>jump out!</b></li>
+  </ol>
+  <div class="keys">
+    <kbd>WASD / Arrows</kbd><span>Move (relative to the camera)</span>
+    <kbd>Mouse</kbd><span>Look around (click the game to lock the mouse)</span>
+    <kbd>Space</kbd><span>Jump</span>
+    <kbd>Shift</kbd><span>Sprint (uses stamina, and Maria can hear you)</span>
+    <kbd>E</kbd><span>Interact</span>
+    <kbd>Esc</kbd><span>Pause</span>
+  </div>
+  <p>🫥 <b>Hide</b> in the cardboard box, the box tunnel, the laundry basket, under the blanket on the chair, behind the monstera, in the hallway shoe pile or on the kitchen cart shelf. If Maria <i>sees</i> you go in, she'll come and check. Under the table she has to kneel down first, so run!</p>
+  <div class="actions"><button data-close>Got it</button></div>
+</div></div>
+
+<div id="settings" class="screen hidden"><div class="card">
+  <h2>⚙️ Settings</h2>
+  <div class="row"><label for="sMusic">Music volume</label><input id="sMusic" type="range" min="0" max="1" step="0.05"></div>
+  <div class="row"><label for="sSfx">Sound effects</label><input id="sSfx" type="range" min="0" max="1" step="0.05"></div>
+  <div class="row"><label for="sSens">Mouse sensitivity</label><input id="sSens" type="range" min="0.2" max="2.5" step="0.1"></div>
+  <div class="row"><label for="sInvert">Invert Y</label><input id="sInvert" type="checkbox"></div>
+  <div class="row"><label for="sShadows">High-quality shadows</label><input id="sShadows" type="checkbox"></div>
+  <div class="actions"><button data-close>Done</button></div>
+</div></div>
+
+<div id="credits" class="screen hidden"><div class="card">
+  <h2>🎬 Credits</h2>
+  <p>The room is a 3D rebuild of a real flat, made in <b>Blender</b> from 12 photos, with the posters, apron and window view textured from those photos.</p>
+  <p>Characters, props, hiding spots and the minestrone were modelled procedurally in Blender. The game runs on <b>three.js</b>. The music and sound effects are synthesised live with the Web Audio API.</p>
+  <p>No vegetables were harmed. Probably.</p>
+  <div class="actions"><button data-close>Close</button></div>
+</div></div>
+
+<div id="hud" class="hidden">
+  <div id="objective">…</div>
+  <div id="status">
+    <div class="pill" id="alert">😌 Maria is cooking</div>
+    <div class="pill">⚡ <div id="stamina"><div></div></div></div>
+    <div class="pill" id="inv">🥢 0/3 · 🌿 0/3</div>
+  </div>
+  <div class="pill" id="timer">⏱ 0:00</div>
+  <div id="toast"></div>
+  <div id="prompt" class="hidden"><div id="promptText"></div><div class="prog"><div id="promptProg"></div></div></div>
+  <div id="crosshint">Click to control the camera · Esc to pause</div>
+</div>
+<div id="vignette"></div>
+<div id="bubble" class="hidden"></div>
+<button id="pauseBtn" class="secondary hidden">⏸</button>
+
+<div id="touch" class="hidden">
+  <div id="stick"><div></div></div>
+  <div id="tbtns"><button id="tJump">Jump</button><button id="tSprint" class="secondary">Run</button><button id="tUse" class="secondary">E</button></div>
+</div>
+
+<div id="pause" class="screen hidden"><div class="card" style="text-align:center">
+  <h2>⏸ Paused</h2>
+  <div class="actions" style="justify-content:center">
+    <button id="btnResume">Resume</button>
+    <button class="secondary" id="btnPauseSettings">Settings</button>
+    <button class="secondary" id="btnRestart">Restart</button>
+    <button class="danger" id="btnQuit">Home</button>
+  </div>
+</div></div>
+
+<div id="lose" class="screen hidden"><div class="card" style="text-align:center">
+  <h1 style="font-size:56px">🍲</h1>
+  <h2>Maria made a lovely minestrone di verdure</h2>
+  <p id="loseText">…with you in it.</p>
+  <div class="actions" style="justify-content:center"><button id="btnRetry">Try again</button><button class="secondary" id="btnLoseHome">Home</button></div>
+</div></div>
+
+<div id="win" class="screen hidden"><div class="card" style="text-align:center">
+  <h1 style="font-size:56px">🥬🌳</h1>
+  <h2>You escaped!</h2>
+  <p id="winText"></p>
+  <div class="actions" style="justify-content:center"><button id="btnAgain">Play again</button><button class="secondary" id="btnWinHome">Home</button></div>
+</div></div>
+
+<script type="module" src="src/main.js"></script>
+</body>
+</html>
