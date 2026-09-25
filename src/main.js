@@ -1,7 +1,10 @@
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { Level } from './level.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { Level, makeLoader } from './level.js';
 import { Nav } from './nav.js';
 import { Player, FollowCam } from './player.js';
 import { Maria } from './maria.js';
@@ -21,11 +24,25 @@ const scene = new THREE.Scene(); scene.background = new THREE.Color(0xcfe3ff);
 scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture;
 scene.environmentIntensity = 0.3;
 const camera = new THREE.PerspectiveCamera(70, 1, 0.02, 60);
-function resize() { renderer.setSize(innerWidth, innerHeight, false); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); }
+
+// Ambient occlusion (soft contact shadows where objects meet) as a post-process.
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+const gtao = new GTAOPass(scene, camera, innerWidth, innerHeight);
+gtao.updateGtaoMaterial({ radius: 0.35, distanceExponent: 1.5, thickness: 1.5, scale: 1.1, samples: 12 });
+gtao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 6, rings: 2, samples: 12 });
+gtao.blendIntensity = 0.9;
+composer.addPass(gtao);
+composer.addPass(new OutputPass());
+
+function resize() {
+  renderer.setSize(innerWidth, innerHeight, false); composer.setSize(innerWidth, innerHeight);
+  camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
+}
 addEventListener('resize', resize); resize();
 
 const ui = new UI(), input = new Input(canvas), audio = new AudioSys(), music = new Music(audio);
-const settings = Object.assign({ music: 0.6, sfx: 0.8, sens: 1, invert: false, shadows: true }, storage.get('saladEscape.settings', {}));
+const settings = Object.assign({ music: 0.6, sfx: 0.8, sens: 1, invert: false, shadows: true, ao: !input.isTouch }, storage.get('saladEscape.settings', {}));
 let best = storage.get('saladEscape.best', null);
 
 let level, nav, player, maria, items, follow;
@@ -35,7 +52,7 @@ const START = { pos: B(3.7, -0.35, 0), yaw: Math.PI };
 // ---------- loading ----------
 async function boot() {
   level = new Level(scene);
-  const loader = new GLTFLoader();
+  const loader = makeLoader();
   let p1 = 0, p2 = 0;
   const [, saladG, mariaG] = await Promise.all([
     level.load('assets/room.glb', (p) => { p1 = p; ui.progress(p1 * 0.85 + p2 * 0.15); }),
@@ -66,7 +83,7 @@ function applySettings() {
 }
 const bindRange = (id, key) => { const el = document.getElementById(id); el.value = settings[key]; el.addEventListener('input', () => { settings[key] = +el.value; applySettings(); }); };
 const bindCheck = (id, key) => { const el = document.getElementById(id); el.checked = settings[key]; el.addEventListener('change', () => { settings[key] = el.checked; applySettings(); }); };
-bindRange('sMusic', 'music'); bindRange('sSfx', 'sfx'); bindRange('sSens', 'sens'); bindCheck('sInvert', 'invert'); bindCheck('sShadows', 'shadows');
+bindRange('sMusic', 'music'); bindRange('sSfx', 'sfx'); bindRange('sSens', 'sens'); bindCheck('sInvert', 'invert'); bindCheck('sShadows', 'shadows'); bindCheck('sAO', 'ao');
 
 // ---------- menus ----------
 const on = (id, fn) => document.getElementById(id).addEventListener('click', () => { audio.click(); fn(); });
@@ -151,15 +168,17 @@ function frame(dt, render) {
   tmp.copy(maria.headPos).project(camera);
   const onScreen = tmp.z < 1 && Math.abs(tmp.x) < 1.2 && Math.abs(tmp.y) < 1.2;
   ui.update(dt, onScreen ? { x: (tmp.x + 1) / 2 * innerWidth, y: (1 - tmp.y) / 2 * innerHeight } : null);
-  if (render) renderer.render(scene, camera);
+  if (render) draw();
 }
+function draw() { if (settings.ao) composer.render(); else renderer.render(scene, camera); }
 
 function homeUpdate(dt) {
   homeT += dt;
   const a = homeT * 0.12;
-  const c = B(2.3, 2.8, 0);
-  camera.position.set(c.x + Math.sin(a) * 1.7, 1.55 + Math.sin(homeT * 0.3) * 0.15, c.z + Math.cos(a) * 1.7);
-  camera.lookAt(B(1.6, 1.8, 0.7));
+  // slow orbit through the middle of the room, never passing through Maria at the counter
+  const c = B(2.4, 3.1, 0);
+  camera.position.set(c.x + Math.sin(a) * 1.15, 1.5 + Math.sin(homeT * 0.3) * 0.12, c.z + Math.cos(a) * 1.15);
+  camera.lookAt(B(1.9, 1.9, 0.75));
   // Maria cooks away; the salad (far away & hidden) never gets noticed
   player.hidden = true; player.sprinting = false;
   maria.update(dt, player, null);
@@ -304,7 +323,9 @@ function debugApi() {
       for (let t = 0; t < seconds; t += 1 / 60) frame(1 / 60, false);
       for (const k of keys) input.keys.delete(k);
     },
-    render() { renderer.render(scene, camera); },
+    render() { draw(); },
+    get drawCalls() { return renderer.info.render.calls; },
+    get mergedBatches() { return level.drawCalls; },
     raw: { get player() { return player; }, get maria() { return maria; }, get items() { return items; }, get level() { return level; } },
   };
 }

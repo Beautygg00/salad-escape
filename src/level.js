@@ -1,12 +1,29 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { B, clamp } from './util.js';
 
 export const ROOM = { W: 4.6, L: 5.5, H: 2.5 };
 
-// Meshes that never block anything (decals, foliage, ceiling bits, soft cloth, tiny props).
-const SOFT = /Ceiling|Seam|Rim_|^Spot_\d|Backdrop|Curtain|Leaves|Stems|Plant_Spider|HideZone|Crown|Soup_|Art\d*$|Photo_Frame_Print|Melvin|Calendar|^Apron|Spray|Hide_Blanket_(Front|SideL|Back)|Hide_CardboardBox_Flap|^Hide_LaundryBasket$|Window_Sash|Window_Handle|Towel|Oven_Mitt|Magnet|Utensil|Dish_Brush|Carrot|Celery|Tomato|Diced|Zucchini|Chef_Knife|Bowl_Veg|Water_Heater|Heater_Pipe|Boiler|Hood|Socket|Switch|Sticker|Display|Knob/;
-const TRANSPARENT = /Glass|Curtain|Clear|Jar_Glass|Carafe|Spray|Pasta_Bag|Frosted|HideZone/;
+// One shared glTF loader that understands Draco-compressed meshes.
+export function makeLoader() {
+  const draco = new DRACOLoader().setDecoderPath('https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/libs/draco/gltf/');
+  return new GLTFLoader().setDRACOLoader(draco);
+}
+
+// Meshes that never block anything (decals, foliage, ceiling bits, soft cloth, handles, tiny props).
+const SOFT = new RegExp([
+  'Ceiling', 'Seam', 'Rim_', '^Spot_\\d', 'Backdrop', 'Curtain', 'Leaves', 'Stems', 'Plant_Spider', 'HideZone', 'Crown', 'Soup_',
+  'Art\\d*$', 'Photo_Frame_Print', 'Melvin', 'Calendar', '^Apron', 'Spray', 'Hide_Blanket', 'Hide_CardboardBox_Flap', 'Hide_CardboardBox_Tape',
+  'Hide_LaundryBasket', 'Window_Sash', 'Window_Handle', 'Towel', 'Oven_Mitt', 'Magnet', 'Utensil', 'Dish_Brush', 'Carrot', 'Celery', 'Tomato',
+  'Diced', 'Zucchini', 'Chef_Knife', 'Bowl_Veg', 'Water_Heater', 'Heater_Pipe', 'Boiler', 'Hood', 'Socket', 'Switch', 'Sticker', 'Display', 'Knob',
+  'Handle', '_Post\\d', 'Faucet', 'Hob_Ring', 'Sink_Drain', 'Paper_Towel', 'Pantry_', 'Cart_Item_', 'Spice_', 'Toy_', 'Tshirt', 'Kettle_Spout',
+  'Label', 'Tape', 'Hall_Door_Panel', 'Hall_Door_Rose', 'Dial', 'Coffee_Cup', 'Fruit', 'Water_Filter_Lid', 'Pillow', 'Sock',
+].join('|'));
+const TRANSPARENT = /Glass|Curtain|Clear|Carafe|Spray|Pasta_Bag|Frosted|HideZone|Jug_Smoke|Bottle_Oil|Bottle_Green/;
+// Meshes the game moves at runtime: keep them as separate objects.
+const DYNAMIC = /^Window_Sash|^Window_Handle|^Chef_Knife|^HideZone/;
 
 function planksTexture() {
   const c = document.createElement('canvas'); c.width = 1024; c.height = 512;
@@ -63,11 +80,11 @@ export class Level {
   }
 
   async load(url, onProgress) {
-    const gltf = await new GLTFLoader().loadAsync(url, (e) => e.total && onProgress?.(e.loaded / e.total));
+    const gltf = await makeLoader().loadAsync(url, (e) => e.total && onProgress?.(e.loaded / e.total));
     this.root = gltf.scene;
     this.scene.add(this.root);
     this.root.updateMatrixWorld(true);
-    const planks = planksTexture(), tiles = tilesTexture();
+    let planks = null, tiles = null; // canvas fallbacks, only used if the export has no textures
 
     this.root.traverse((o) => {
       if (o.name.startsWith('Spot_') && !o.isMesh) this.spots[o.name.slice(5)] = o.getWorldPosition(new THREE.Vector3());
@@ -75,16 +92,18 @@ export class Level {
       const name = o.name;
       const mats = Array.isArray(o.material) ? o.material : [o.material];
       for (const m of mats) {
-        if (TRANSPARENT.test(m.name) || m.opacity < 1) { m.transparent = true; m.depthWrite = false; m.opacity = Math.min(m.opacity, /Glass/.test(m.name) ? 0.14 : 0.6); }
+        if (TRANSPARENT.test(m.name) || m.opacity < 1) { m.transparent = true; m.depthWrite = false; m.opacity = Math.min(m.opacity, /Glass/.test(m.name) ? 0.2 : 0.65); }
         if (/Curtain/.test(m.name)) { m.opacity = 0.5; m.side = THREE.DoubleSide; }
+        if (/Leaf|Monstera_Leaf/.test(m.name)) m.side = THREE.DoubleSide; // single-sided leaf cards
         if (m.name === 'IMG_Window_View') { m.toneMapped = false; m.emissiveIntensity = 1.0; }
+        if (m.map) m.map.anisotropy = 8;
       }
-      if (name === 'Floor' || name === 'Hall_Floor') {
-        planarUV(o, 'x', 'z', 2.6, 0.76);
+      if ((name === 'Floor' || name === 'Hall_Floor') && !o.material.map) {
+        planarUV(o, 'x', 'z', 2.6, 0.76); planks ??= planksTexture();
         o.material = o.material.clone(); o.material.map = planks; o.material.color.set(0xffffff); o.material.roughness = 0.55;
       }
-      if (name === 'Backsplash_Tiles') {
-        planarUV(o, 'x', 'y', 0.15, 0.15);
+      if (name === 'Backsplash_Tiles' && !o.material.map) {
+        planarUV(o, 'x', 'y', 0.15, 0.15); tiles ??= tilesTexture();
         o.material = o.material.clone(); o.material.map = tiles; o.material.color.set(0xffffff); o.material.roughness = 0.15;
       }
       if (/Backdrop/.test(name)) { o.castShadow = o.receiveShadow = false; return; }
@@ -120,7 +139,40 @@ export class Level {
     this.knifeRest = this.knife?.position.clone();
     this.potTop = B(0.86, 0.32, 1.07);
     this.table = { center: B(1.2, 4.3, 0), r: 0.6, top: 0.73 };
+    this.mergeStatic();
     this.addLights();
+  }
+
+  // Merge every static mesh that shares a material into one draw call.
+  // Colliders and raycast occluders keep pointing at the original (now detached) meshes.
+  mergeStatic() {
+    const groups = new Map(), victims = [];
+    this.root.traverse((o) => {
+      if (!o.isMesh || !o.visible || Array.isArray(o.material)) return;
+      let p = o, dyn = false;
+      while (p) { if (DYNAMIC.test(p.name)) { dyn = true; break; } p = p.parent; }
+      if (dyn) return;
+      const key = `${o.material.uuid}|${o.castShadow}|${o.receiveShadow}`;
+      if (!groups.has(key)) groups.set(key, { mat: o.material, cast: o.castShadow, recv: o.receiveShadow, geos: [] });
+      const g = o.geometry.clone().applyMatrix4(o.matrixWorld);
+      for (const a of Object.keys(g.attributes)) if (!['position', 'normal', 'uv'].includes(a)) g.deleteAttribute(a);
+      if (!g.attributes.normal) g.computeVertexNormals();
+      if (!g.attributes.uv) g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(g.attributes.position.count * 2), 2));
+      if (!g.index) g.setIndex([...Array(g.attributes.position.count).keys()]);
+      g.morphAttributes = {};
+      groups.get(key).geos.push(g);
+      victims.push(o);
+    });
+    for (const o of victims) o.parent.remove(o);
+    this.merged = new THREE.Group(); this.merged.name = 'MergedStatic';
+    for (const { mat, cast, recv, geos } of groups.values()) {
+      const geo = geos.length === 1 ? geos[0] : mergeGeometries(geos, false);
+      if (!geo) continue;
+      const m = new THREE.Mesh(geo, mat); m.castShadow = cast; m.receiveShadow = recv; m.matrixAutoUpdate = false;
+      this.merged.add(m);
+    }
+    this.scene.add(this.merged);
+    this.drawCalls = this.merged.children.length;
   }
 
   addBox(name, a, b) {

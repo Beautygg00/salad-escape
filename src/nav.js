@@ -55,12 +55,13 @@ export class Nav {
     const h = (i, j) => Math.hypot(i - gi, j - gj);
     const push = (item) => { heap.push(item); let k = heap.length - 1; while (k > 0) { const p = (k - 1) >> 1; if (heap[p][0] <= heap[k][0]) break; [heap[p], heap[k]] = [heap[k], heap[p]]; k = p; } };
     const pop = () => { const top = heap[0], last = heap.pop(); if (heap.length) { heap[0] = last; let k = 0; for (;;) { const l = k * 2 + 1, r = l + 1; let m = k; if (l < heap.length && heap[l][0] < heap[m][0]) m = l; if (r < heap.length && heap[r][0] < heap[m][0]) m = r; if (m === k) break; [heap[m], heap[k]] = [heap[k], heap[m]]; k = m; } } return top; };
-    let found = false, iters = 0;
+    let found = false, iters = 0, best = s, bestH = Infinity;
     while (heap.length && iters++ < 20000) {
       const [, cur] = pop();
       if (cur === g) { found = true; break; }
       if (closed[cur]) continue; closed[cur] = 1;
       const ci = cur % this.nx, cj = (cur / this.nx) | 0;
+      const hc = h(ci, cj); if (hc < bestH) { bestH = hc; best = cur; }
       for (let di = -1; di <= 1; di++) for (let dj = -1; dj <= 1; dj++) {
         if (!di && !dj) continue;
         const ni = ci + di, nj = cj + dj;
@@ -70,9 +71,11 @@ export class Nav {
         if (cost < gScore[n]) { gScore[n] = cost; came[n] = cur; push([cost + h(ni, nj), n]); }
       }
     }
-    if (!found) return null;
+    // unreachable goal (e.g. a pocket behind furniture): walk to the closest reachable cell instead
+    const end = found ? g : best;
+    if (end === s) return [this.center(si, sj)];
     const cells = [];
-    for (let c = g; c !== -1; c = came[c]) cells.push(this.center(c % this.nx, (c / this.nx) | 0));
+    for (let c = end; c !== -1; c = came[c]) cells.push(this.center(c % this.nx, (c / this.nx) | 0));
     cells.reverse();
     // string-pull: keep only the points we can't walk straight past
     const out = [cells[0]];
