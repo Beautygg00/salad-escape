@@ -4,7 +4,16 @@ import { B, shuffle, dist2D } from './util.js';
 const CHOPSTICK_SPOTS = [
   [1.35, 4.45, 0.02], [0.4, 3.15, 0], [3.12, 0.25, 0.17], [3.62, -1.9, 0], [2.3, 1.8, 0], [0.12, 5.33, 0], [1.6, 2.9, 0],
 ];
-const BASIL_SPOTS = [[3.95, 1.5, 0.55], [3.95, 3.0, 0.55], [4.0, 4.45, 0.55]];
+// Basil hides all over the flat (3 are picked each round, at most one on the sofa).
+const BASIL_SPOTS = [
+  { p: [3.12, 4.05, 0.0], tag: 'basket' },       // inside the tipped laundry basket
+  { p: [0.62, 3.95, 0.0], tag: 'blanket' },      // in the blanket tent under the chair
+  { p: [1.02, 4.12, 0.06], tag: 'table' },       // on the tulip table's base
+  { p: [3.5, -1.42, 0.1], tag: 'shoe' },         // on top of a sneaker in the hallway
+  { p: [0.9, 2.6, 0.01], tag: 'box' },           // inside the cardboard box
+  { p: [1.5, 0.74, 0.0], tag: 'kitchen' },       // in front of the sink, between Maria's two work spots
+  { p: [3.25, 4.95, 0.505], tag: 'sofa' },       // on the chaise, via the ramp
+];
 
 function chopstickMesh() {
   const g = new THREE.Group();
@@ -56,7 +65,9 @@ export class Items {
     this.pickups.push({ kind, g, obj, ring, base: pos.y, t: Math.random() * 6 });
   }
 
-  spawnBasil() { for (const s of BASIL_SPOTS) this.addPickup('basil', B(...s)); }
+  spawnBasil() {
+    for (const s of shuffle([...BASIL_SPOTS]).slice(0, 3)) this.addPickup('basil', B(...s.p));
+  }
 
   buildRamp() {
     // three chopsticks side by side, from the floor up to the sofa chaise
@@ -102,7 +113,7 @@ export class Items {
     if (!this.windowOpen && player.superLeap && onSill) {
       if (useHeld) {
         if (this.windowProgress === 0) { this.audio.creak(); event = 'windowStart'; }
-        this.windowProgress = Math.min(1, this.windowProgress + dt / 2);
+        this.windowProgress = Math.min(1, this.windowProgress + dt / 1.2);
         if (this.windowProgress >= 1) {
           this.windowOpen = true; this.level.removeDynamic(this.level.sashCollider); this.audio.creak(); event = 'windowOpen';
         }
@@ -115,8 +126,9 @@ export class Items {
   }
 
   onSill(player) {
-    const b = { x0: 2.55, x1: 3.8 };
-    return player.feet > 0.85 && player.feet < 1.2 && player.pos.x > b.x0 && player.pos.x < b.x1 && player.pos.z < -5.2;
+    // the openable pane, plus the corner where the sofa back meets the sill (no cactus hop needed)
+    const b = { x0: 2.55, x1: 4.05 };
+    return player.feet > 0.8 && player.feet < 1.2 && player.pos.x > b.x0 && player.pos.x < b.x1 && player.pos.z < -5.15;
   }
 }
 

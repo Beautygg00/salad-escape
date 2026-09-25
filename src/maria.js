@@ -13,9 +13,17 @@ const LINES = {
   noise: ['Who\'s running around?', 'Did something just squeak?'],
 };
 
+// Tuning per difficulty. "hard" is the original balance; "normal" is the default.
+export const DIFFICULTY = {
+  easy: { chase: 1.25, walk: 0.85, bonus: 0.03, seeNear: 1.0, seeFar: 0.5, cone: 50, range: 5.5, lose: 0.9, reach: 0.4, reachHigh: 0.75, hear: 0.9, kneel: 4.2, check: 3.2, grace: 7 },
+  normal: { chase: 1.45, walk: 0.95, bonus: 0.06, seeNear: 1.7, seeFar: 0.85, cone: 56, range: 6.5, lose: 1.2, reach: 0.45, reachHigh: 0.85, hear: 1.2, kneel: 3.4, check: 2.6, grace: 5 },
+  hard: { chase: 1.7, walk: 1.0, bonus: 0.12, seeNear: 3.5, seeFar: 1.8, cone: 62, range: 8, lose: 1.6, reach: 0.55, reachHigh: 1.05, hear: 1.6, kneel: 2.5, check: 1.8, grace: 0 },
+};
+
 export class Maria {
   constructor(model, level, nav, audio, ui) {
     Object.assign(this, { model, level, nav, audio, ui });
+    this.diff = DIFFICULTY.normal;
     this.legL = findPart(model, 'Leg_L'); this.legR = findPart(model, 'Leg_R');
     this.armL = findPart(model, 'Arm_L'); this.armR = findPart(model, 'Arm_R');
     this.head = findPart(model, 'Maria_Head');
@@ -33,8 +41,10 @@ export class Maria {
     this.stateT = 0; this.glanceT = rand(4, 7); this.glancing = 0; this.chopT = 0; this.stepT = 0;
     this.speedBonus = 0; this.frozen = false; this.cinematic = false; this.searchQueue = [];
     this.bubbleT = 0; this.lineCooldown = 0; this.checkZone = null;
+    this.grace = this.diff.grace; // head start: she's busy with the soup for the first few seconds
     this.model.position.copy(this.pos); this.model.rotation.y = 0;
   }
+  setDifficulty(name) { this.diff = DIFFICULTY[name] || DIFFICULTY.normal; }
 
   say(kind, force = false) {
     if (!force && this.lineCooldown > 0) return;
@@ -52,10 +62,10 @@ export class Maria {
     if (player.hidden && this.state !== 'check') return false;
     const eye = new THREE.Vector3(this.pos.x, 1.55, this.pos.z), target = player.center;
     const to = target.clone().sub(eye), d = to.length();
-    if (d > 8) return false;
+    if (d > this.diff.range) return false;
     const facing = this.yaw;
     const fx = Math.sin(facing), fz = Math.cos(facing), fl = Math.hypot(to.x, to.z) || 1;
-    if ((to.x * fx + to.z * fz) / fl < Math.cos(THREE.MathUtils.degToRad(62)) && d > 0.9) return false;
+    if ((to.x * fx + to.z * fz) / fl < Math.cos(THREE.MathUtils.degToRad(this.diff.cone)) && d > 0.9) return false;
     this.ray.set(eye, to.normalize()); this.ray.far = d;
     const hit = this.ray.intersectObjects(this.level.occluders, false)[0];
     return !hit || hit.distance > d - 0.18;
@@ -100,21 +110,23 @@ export class Maria {
   update(dt, player, game) {
     this.lineCooldown -= dt; this.stateT += dt; this.stepSound = false;
     if (this.frozen || this.cinematic) { this.sync(); return null; }
-    const chase = 1.7 + this.speedBonus, walk = 1.0 + this.speedBonus * 0.5;
+    const D = this.diff;
+    const chase = D.chase + this.speedBonus, walk = D.walk + this.speedBonus * 0.5;
 
-    // vision (throttled)
+    // vision (throttled); blind during the opening grace period
+    this.grace -= dt;
     this.visionT -= dt;
-    if (this.visionT <= 0) { this.visionT = 0.12; this.seesPlayer = this.canSee(player); }
+    if (this.visionT <= 0) { this.visionT = 0.12; this.seesPlayer = this.grace <= 0 && this.canSee(player); }
     const d = dist2D(this.pos, player.pos);
     if (this.seesPlayer) {
       this.lastSeen = player.pos.clone();
-      this.suspicion = Math.min(1, this.suspicion + dt * (d < 2 ? 3.5 : 1.8));
+      this.suspicion = Math.min(1, this.suspicion + dt * (d < 2 ? D.seeNear : D.seeFar));
       if (this.suspicion >= 1 && this.state !== 'chase' && this.state !== 'window' && this.state !== 'kneel' && this.state !== 'check') {
         this.goState('chase'); this.say('spot', true); this.audio.alert(); this.glancing = 0;
       }
     } else if (this.state !== 'chase') this.suspicion = Math.max(0, this.suspicion - dt * 0.25);
     // she can hear you sprinting close by
-    if (player.sprinting && !player.hidden && d < 1.6 && (this.state === 'cook' || this.state === 'search')) {
+    if (player.sprinting && !player.hidden && this.grace <= 0 && d < D.hear && (this.state === 'cook' || this.state === 'search')) {
       this.lastSeen = player.pos.clone(); this.suspicion = Math.max(this.suspicion, 0.6);
       if (this.state === 'cook') { this.goState('search'); this.say('noise'); }
     }
@@ -127,7 +139,7 @@ export class Maria {
         if (knowsSpot || underTable) this.lastSeen = player.pos.clone();
         if (!this.seesPlayer && !knowsSpot && !underTable) {
           this.lostT += dt;
-          if (this.lostT > 1.6) { this.goState('search'); this.say('lost'); this.lostT = 0; this.suspicion = 0.5; this.planSearch(); }
+          if (this.lostT > D.lose) { this.goState('search'); this.say('lost'); this.lostT = 0; this.suspicion = 0.5; this.planSearch(); }
         } else this.lostT = 0;
         const target = this.seesPlayer ? player.pos : (this.lastSeen || player.pos);
         this.moveTo(new THREE.Vector3(target.x, 0, target.z), chase, dt);
@@ -139,7 +151,7 @@ export class Maria {
       case 'kneel': {
         this.faceToward(player.pos, dt); this.idleAnim(dt);
         this.model.position.y = -0.35 * Math.min(1, this.stateT * 2); this.armR.rotation.x = -1.4;
-        if (this.stateT > 2.5) {
+        if (this.stateT > D.kneel) {
           this.model.position.y = 0;
           if (this.level.underTable(player.pos, player.feet) && d < 0.95) return 'caught';
           this.goState('chase');
@@ -148,14 +160,14 @@ export class Maria {
       }
       case 'check': {
         this.faceToward(player.pos, dt); this.idleAnim(dt); this.armR.rotation.x = -1.2; this.armL.rotation.x = -1.0;
-        if (this.stateT > 1.8) {
+        if (this.stateT > D.check) {
           if (player.zone === this.checkZone && d < 1.0) return 'caught';
           this.checkZone = null; this.goState('search'); this.say('lost'); this.planSearch();
         }
         break;
       }
       case 'window': {
-        this.moveTo(this.nav.nearestFree(player.pos.x, player.pos.z) || this.pos, chase * 1.1, dt);
+        this.moveTo(this.nav.nearestFree(player.pos.x, player.pos.z) || this.pos, chase, dt);
         break;
       }
     }
@@ -174,7 +186,7 @@ export class Maria {
       if (player.zone && player.seenEnter && d < 0.9) { this.checkZone = player.zone; this.goState('check'); this.say('check', true); }
       return null;
     }
-    const reach = player.feet > 0.35 ? 1.05 : 0.55;
+    const reach = player.feet > 0.35 ? this.diff.reachHigh : this.diff.reach;
     if (d > reach) return null;
     if (this.state === 'search' && !this.seesPlayer) return null;
     return 'caught';

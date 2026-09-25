@@ -26,6 +26,14 @@ export class UI {
   setTimer(sec) { this.el.timer.textContent = `⏱ ${fmt(sec)}`; }
   setAlert(text, cls) { const a = this.el.alert; if (a.textContent !== text) a.textContent = text; a.className = `pill ${cls}`; }
   setVignette(v) { this.el.vignette.style.opacity = v; }
+  setCompass(angle, dist) {
+    const c = $('compass');
+    if (angle == null) { c.classList.add('hidden'); return; }
+    c.classList.remove('hidden');
+    // ➤ points right by default; rotate so 0 = straight ahead (up)
+    $('compassArrow').style.transform = `rotate(${angle - Math.PI / 2}rad)`;
+    $('compassDist').textContent = dist < 0.4 ? 'here!' : `${dist.toFixed(1)} m`;
+  }
   toast(text, dur = 2.2) { this.el.toast.textContent = text; this.el.toast.style.opacity = 1; this.toastT = dur; }
   prompt(text, prog) {
     if (text == null) { this.show('prompt', false); return; }

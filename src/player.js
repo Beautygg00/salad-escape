@@ -31,8 +31,8 @@ export class Player {
     const mag = Math.hypot(dx, dz);
     this.moving = mag > 0.05;
     this.sprinting = this.moving && input.sprint && this.stamina > 0.02;
-    if (this.sprinting) this.stamina = Math.max(0, this.stamina - dt / 3.2);
-    else this.stamina = Math.min(1, this.stamina + dt * (this.moving ? 0.18 : 0.3));
+    if (this.sprinting) this.stamina = Math.max(0, this.stamina - dt / 4.5);
+    else this.stamina = Math.min(1, this.stamina + dt * (this.moving ? 0.22 : 0.38));
     const speed = (this.sprinting ? 2.4 : 1.45) * (this.onGround ? 1 : 0.85);
     if (this.moving) this.yaw = angleDamp(this.yaw, Math.atan2(dx, dz), 12, dt);
 

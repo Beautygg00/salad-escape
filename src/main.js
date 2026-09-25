@@ -42,7 +42,7 @@ function resize() {
 addEventListener('resize', resize); resize();
 
 const ui = new UI(), input = new Input(canvas), audio = new AudioSys(), music = new Music(audio);
-const settings = Object.assign({ music: 0.6, sfx: 0.8, sens: 1, invert: false, shadows: true, ao: !input.isTouch }, storage.get('saladEscape.settings', {}));
+const settings = Object.assign({ music: 0.6, sfx: 0.8, sens: 1, invert: false, shadows: true, ao: !input.isTouch, difficulty: 'normal' }, storage.get('saladEscape.settings', {}));
 let best = storage.get('saladEscape.best', null);
 
 let level, nav, player, maria, items, follow;
@@ -79,7 +79,12 @@ function applySettings() {
   audio.setVolumes(settings.music, settings.sfx);
   if (follow) { follow.sens = settings.sens; follow.invert = settings.invert; }
   level?.setShadowQuality(settings.shadows);
+  maria?.setDifficulty(settings.difficulty);
   storage.set('saladEscape.settings', settings);
+}
+{
+  const sel = document.getElementById('sDifficulty'); sel.value = settings.difficulty;
+  sel.addEventListener('change', () => { settings.difficulty = sel.value; applySettings(); });
 }
 const bindRange = (id, key) => { const el = document.getElementById(id); el.value = settings[key]; el.addEventListener('input', () => { settings[key] = +el.value; applySettings(); }); };
 const bindCheck = (id, key) => { const el = document.getElementById(id); el.checked = settings[key]; el.addEventListener('change', () => { settings[key] = el.checked; applySettings(); }); };
@@ -123,6 +128,7 @@ function resetWorld() {
 
 function startGame() {
   audio.init(settings.music, settings.sfx); music.start(); music.setLevel(0);
+  maria.setDifficulty(settings.difficulty);
   resetWorld();
   player.reset(START.pos, START.yaw); player.frozen = false; player.model.visible = true;
   follow.yaw = 0; follow.pitch = 0.38; follow.target.copy(player.center); follow.cur = follow.dist;
@@ -141,10 +147,10 @@ function resume() { state = 'play'; ui.only('hud', ...(input.isTouch ? ['touch',
 function updateObjective() {
   const c = items.chopsticks, b = items.basil;
   if (c < 3) { stage = 0; ui.setObjective(`🥢 Find <b>3 chopsticks</b> to build a ramp to the sofa (${c}/3)`); }
-  else if (b < 3) { stage = 1; ui.setObjective(`🛋️ Climb the chopstick ramp onto the sofa and grab the <b>basil leaves</b> (${b}/3)`); }
-  else if (!items.windowOpen) { stage = 2; ui.setObjective('🌿 <b>Super Leap!</b> Jump onto the sofa back, follow it to the <b>window sill</b> (hop over the plants!) and hold <b>E</b> at the window'); }
-  else { stage = 3; ui.setObjective('🪟 The window is open: <b>JUMP OUT!</b>'); }
-  maria.speedBonus = stage * 0.12;
+  else if (b < 3) { stage = 1; ui.setObjective(`🌿 Ramp built! Now find the <b>3 basil leaves</b> hidden around the flat (${b}/3)`); }
+  else if (!items.windowOpen) { stage = 2; ui.setObjective('🌿 <b>Super Leap!</b> Climb the ramp onto the sofa, jump onto the backrest, follow it to the window corner and hold <b>E</b>'); }
+  else { stage = 3; ui.setObjective('🪟 The window is open: press <b>SPACE</b> to leap out!'); }
+  maria.speedBonus = stage * maria.diff.bonus;
   ui.setInventory(c, b);
 }
 
@@ -202,7 +208,10 @@ function playUpdate(dt) {
   const result = maria.update(dt, player, null);
   const ev = items.update(dt, player, input.use);
   handleEvent(ev);
+  // window open + on the sill: any jump launches you out
+  if (state === 'play' && items.windowOpen && items.onSill(player) && player.vy > 0.5) startEscape();
   if (result === 'caught' && state === 'play') startCaught();
+  if (state !== 'play') return;
 
   // HUD
   follow.update(dt, player.center.add(new THREE.Vector3(0, 0.12, 0)));
@@ -216,8 +225,28 @@ function playUpdate(dt) {
   else ui.setAlert('😌 Maria is cooking', 'calm');
   ui.setVignette(lvl === 2 ? 0.6 + Math.sin(playTime * 8) * 0.2 : 0);
   if (player.superLeap && !items.windowOpen && items.onSill(player)) ui.prompt(input.isTouch ? 'Hold E to open the window' : 'Hold [E] to open the window', items.windowProgress);
+  else if (items.windowOpen && items.onSill(player)) ui.prompt(input.isTouch ? 'Tap JUMP to leap out!' : 'Press [SPACE] to leap out!', 1);
   else ui.prompt(null);
+  updateCompass();
   soundsFromMaria();
+}
+
+// Small arrow under the objective that points at the next thing to do.
+function updateCompass() {
+  let target = null;
+  if (stage <= 1) {
+    const kind = stage === 0 ? 'chopstick' : 'basil';
+    let bd = Infinity;
+    for (const p of items.pickups) {
+      if (p.kind !== kind) continue;
+      const d = dist2D(p.g.position, player.pos);
+      if (d < bd) { bd = d; target = p.g.position; }
+    }
+  } else target = B(3.9, 5.33, 0.9);
+  if (!target) { ui.setCompass(null); return; }
+  const dx = target.x - player.pos.x, dz = target.z - player.pos.z, dist = Math.hypot(dx, dz);
+  const fx = -Math.sin(follow.yaw), fz = -Math.cos(follow.yaw), rx = Math.cos(follow.yaw), rz = -Math.sin(follow.yaw);
+  ui.setCompass(Math.atan2(dx * rx + dz * rz, dx * fx + dz * fz), dist);
 }
 
 function soundsFromMaria() {
@@ -230,12 +259,12 @@ function soundsFromMaria() {
 function handleEvent(ev) {
   if (!ev) return;
   if (ev === 'chopstick') ui.toast(`🥢 Chopstick ${items.chopsticks}/3`);
-  if (ev === 'ramp') ui.toast('🥢 Ramp built! Climb onto the sofa!', 3);
+  if (ev === 'ramp') ui.toast('🥢 Ramp built! Basil leaves appeared around the flat 🌿', 3.5);
   if (ev === 'basil') ui.toast(`🌿 Basil friend ${items.basil}/3`);
   if (ev === 'superleap') ui.toast('🌿 SUPER LEAP unlocked!', 3);
   if (ev === 'windowStart') { maria.say('window', true); }
   if (ev === 'windowOpen') {
-    ui.toast('🪟 The window is open! JUMP!', 3);
+    ui.toast('🪟 The window is open! Press SPACE to leap out!', 3);
     maria.goState('window'); maria.say('window', true); audio.alert();
   }
   if (ev === 'escaped') startEscape();
@@ -251,7 +280,8 @@ function startCaught() {
   maria.say('caught', true); audio.alert(); music.setLevel(2);
 }
 function startEscape() {
-  state = 'escaping'; cine = { t: 0, vel: new THREE.Vector3(0, 2.2, -1.6) };
+  // hop into the open pane first (so we never fly through the wall), then sail outside
+  state = 'escaping'; cine = { t: 0, from: player.model.position.clone(), via: B(3.2, 5.52, 1.12), vel: new THREE.Vector3(0, 1.4, -2.2) };
   if (document.pointerLockElement) document.exitPointerLock();
   ui.prompt(null); ui.show('touch', false); ui.show('pauseBtn', false);
   audio.win(); music.setLevel(0); maria.frozen = true;
@@ -287,8 +317,13 @@ function cineUpdate(dt) {
     const look = player.model.position;
     camera.position.lerp(B(2.3, 2.3, 1.7), 1 - Math.exp(-2 * dt)); camera.lookAt(look);
   } else if (state === 'escaping') {
-    cine.vel.y -= 4 * dt;
-    player.model.position.addScaledVector(cine.vel, dt); player.model.rotation.x += dt * 3;
+    if (cine.t < 0.45) {
+      const k = cine.t / 0.45, p = cine.from.clone().lerp(cine.via, k); p.y += Math.sin(k * Math.PI) * 0.12;
+      player.model.position.copy(p); player.model.rotation.y = Math.PI;
+    } else {
+      cine.vel.y -= 4 * dt;
+      player.model.position.addScaledVector(cine.vel, dt); player.model.rotation.x += dt * 3;
+    }
     player.animate(dt, 2);
     camera.position.lerp(B(3.2, 4.9, 1.25), 1 - Math.exp(-3 * dt)); camera.lookAt(player.model.position);
     if (cine.t > 2.2) {
@@ -326,7 +361,17 @@ function debugApi() {
     render() { draw(); },
     get drawCalls() { return renderer.info.render.calls; },
     get mergedBatches() { return level.drawCalls; },
-    raw: { get player() { return player; }, get maria() { return maria; }, get items() { return items; }, get level() { return level; } },
+    raw: { get player() { return player; }, get maria() { return maria; }, get items() { return items; }, get level() { return level; }, get follow() { return follow; } },
+    // test helper: walk (and optionally hop) toward a point given in Blender coordinates
+    walkTo(bx, by, secs = 3, hop = false) {
+      for (let t = 0; t < secs; t += 0.1) {
+        const dx = bx - player.pos.x, dz = -by - player.pos.z;
+        if (Math.hypot(dx, dz) < 0.06) break;
+        follow.yaw = Math.atan2(-dx, -dz);
+        this.sim(0.1, hop && player.onGround ? ['KeyW', 'Space'] : ['KeyW']);
+      }
+      return { pos: player.pos.toArray().map((v) => +v.toFixed(2)), feet: +player.feet.toFixed(2) };
+    },
   };
 }
 
